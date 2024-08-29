@@ -1,5 +1,5 @@
 defmodule Kaffy.ResourceForm do
-  use Phoenix.HTML
+  use PhoenixHTMLHelpers
 
   def form_label_string({field, options}), do: Map.get(options, :label, field)
   def form_label_string(field) when is_atom(field), do: field
@@ -33,7 +33,7 @@ defmodule Kaffy.ResourceForm do
     end
   end
 
-  def form_field(changeset, form, {field, options}, opts) do
+  def form_field(changeset, form, {field, options}, opts \\ []) do
     options = options || %{}
 
     type =
@@ -47,8 +47,15 @@ defmodule Kaffy.ResourceForm do
         opts
       end
 
+    # Check if any primary key fields are nil
+    is_create_event =
+      changeset.data.__struct__
+      |> Kaffy.ResourceSchema.primary_keys()
+      |> Enum.map(&Map.get(changeset.data, &1))
+      |> Enum.any?(&is_nil/1)
+
     permission =
-      case is_nil(changeset.data.id) do
+      case is_create_event do
         true -> Map.get(options, :create, :editable)
         false -> Map.get(options, :update, :editable)
       end
@@ -57,7 +64,7 @@ defmodule Kaffy.ResourceForm do
 
     cond do
       !is_nil(choices) ->
-        select(form, field, choices, class: "custom-select")
+        select(form, field, choices, class: "custom-select", disabled: permission == :readonly)
 
       true ->
         build_html_input(
@@ -108,7 +115,9 @@ defmodule Kaffy.ResourceForm do
                   [
                     [
                       form_label(fp, f),
-                      form_field(embed_changeset, fp, {field_name, options}, class: "form-control")
+                      form_field(embed_changeset, fp, {field_name, options},
+                        class: "form-control"
+                      )
                     ]
                     | all
                   ]
@@ -141,7 +150,9 @@ defmodule Kaffy.ResourceForm do
                   [
                     [
                       form_label(fp, f),
-                      form_field(embed_changeset, fp, {field_name, options}, class: "form-control")
+                      form_field(embed_changeset, fp, {field_name, options},
+                        class: "form-control"
+                      )
                     ]
                     | all
                   ]
@@ -290,25 +301,32 @@ defmodule Kaffy.ResourceForm do
   end
 
   defp flatpickr_generic(form, field, opts, placeholder, fp_class, icon \\ "📅") do
-    opts = Keyword.put(opts, :class, "flatpickr-input")
-    opts = Keyword.put(opts, :class, "form-control")
+    opts = add_class(opts, "flatpickr-input")
+    opts = add_class(opts, "form-control")
     opts = Keyword.put(opts, :id, "inlineFormInputGroup")
     opts = Keyword.put(opts, :placeholder, placeholder)
     opts = Keyword.put(opts, :"data-input", "")
+    editable = not Keyword.get(opts, :readonly, false)
 
-    [
-      {:safe, ~s(
-            <div class="input-group mb-2 flatpickr #{fp_class}">
-              <div class="input-group-prepend">
-                <div class="input-group-text" data-clear>❌</div>
-              </div>
-              <div class="input-group-prepend">
-                <div class="input-group-text" data-toggle>#{icon}</div>
-              </div>
-          )},
-      text_input(form, field, opts),
-      {:safe, "</div>"}
-    ]
+    case editable do
+      true ->
+        [
+          {:safe, ~s(
+              <div class="input-group mb-2 flatpickr #{fp_class}">
+                <div class="input-group-prepend">
+                  <div class="input-group-text" data-clear>❌</div>
+                </div>
+                <div class="input-group-prepend">
+                  <div class="input-group-text" data-toggle>#{icon}</div>
+                </div>
+            )},
+          text_input(form, field, opts),
+          {:safe, "</div>"}
+        ]
+
+      false ->
+        text_input(form, field, opts)
+    end
   end
 
   defp text_or_assoc(conn, schema, form, field, opts) do
@@ -339,23 +357,28 @@ defmodule Kaffy.ResourceForm do
                 number_input(form, field,
                   class: "form-control",
                   id: field,
+                  disabled: opts[:readonly],
                   aria_describedby: field
                 ),
-                content_tag :div, class: "input-group-append" do
-                  content_tag :span, class: "input-group-text", id: field do
-                    link(content_tag(:i, "", class: "fas fa-search"),
-                      to:
-                        Kaffy.Utils.router().kaffy_resource_path(
-                          conn,
-                          :index,
-                          target_context,
-                          target_resource,
-                          c: conn.params["context"],
-                          r: conn.params["resource"],
-                          pick: field
-                        ),
-                      id: "pick-raw-resource"
-                    )
+                if opts[:readonly] do
+                  ""
+                else
+                  content_tag :div, class: "input-group-append" do
+                    content_tag :span, class: "input-group-text", id: field do
+                      link(content_tag(:i, "", class: "fas fa-search"),
+                        to:
+                          Kaffy.Utils.router().kaffy_resource_path(
+                            conn,
+                            :index,
+                            target_context,
+                            target_resource,
+                            c: conn.params["context"],
+                            r: conn.params["resource"],
+                            pick: field
+                          ),
+                        id: "pick-raw-resource"
+                      )
+                    end
                   end
                 end
               ]
@@ -388,8 +411,12 @@ defmodule Kaffy.ResourceForm do
             select(
               form,
               field,
-              Enum.map(options, fn o -> {Map.get(o, string_field, "Resource ##{o.id}"), o.id} end),
-              class: "custom-select"
+              [{nil, nil}] ++
+                Enum.map(options, fn o ->
+                  {Map.get(o, string_field, "Resource ##{o.id}"), o.id}
+                end),
+              class: "custom-select",
+              disabled: opts[:readonly]
             )
         end
 
@@ -463,5 +490,9 @@ defmodule Kaffy.ResourceForm do
           [label_tag, field_tag, field_feeback]
         end
     end
+  end
+
+  defp add_class(opts, class) do
+    Keyword.update(opts, :class, class, &"#{&1} #{class}")
   end
 end

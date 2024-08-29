@@ -1,7 +1,7 @@
 defmodule Kaffy.ResourceSchema do
   @moduledoc false
 
-  def primary_key(schema) do
+  def primary_keys(schema) do
     schema.__schema__(:primary_key)
   end
 
@@ -19,12 +19,18 @@ defmodule Kaffy.ResourceSchema do
     end
   end
 
+  def index_description(_schema), do: nil
+
   def index_fields(schema) do
     Keyword.drop(fields(schema), fields_to_be_removed(schema))
   end
 
   def form_fields(schema) do
-    to_be_removed = fields_to_be_removed(schema) ++ [:id, :inserted_at, :updated_at]
+    to_be_removed =
+      fields_to_be_removed(schema) ++
+        primary_keys(schema) ++
+        [:inserted_at, :updated_at]
+
     Keyword.drop(fields(schema), to_be_removed)
   end
 
@@ -33,7 +39,9 @@ defmodule Kaffy.ResourceSchema do
       fields_to_be_removed(schema) ++
         get_has_many_associations(schema) ++
         get_has_one_assocations(schema) ++
-        get_many_to_many_associations(schema) ++ [:id, :inserted_at, :updated_at]
+        get_many_to_many_associations(schema) ++
+        primary_keys(schema) ++
+        [:inserted_at, :updated_at]
 
     Keyword.drop(fields(schema), to_be_removed)
   end
@@ -81,6 +89,9 @@ defmodule Kaffy.ResourceSchema do
         {:assoc, %Ecto.Association.Has{cardinality: :one}} ->
           [field | all]
 
+        {:assoc, %Ecto.Association.ManyToMany{}} ->
+          [field | all]
+
         _ ->
           all
       end
@@ -103,6 +114,7 @@ defmodule Kaffy.ResourceSchema do
     else
       fields_list
     end
+
     # |> reorder_field(Kaffy.ResourceSchema.embeds(schema), :last)
   end
 
@@ -160,7 +172,6 @@ defmodule Kaffy.ResourceSchema do
   end
 
   def kaffy_field_value(conn, schema, {field, options}) do
-    default_value = kaffy_field_value(schema, field)
     ft = Kaffy.ResourceSchema.field_type(schema.__struct__, field)
     value = Map.get(options || %{}, :value)
 
@@ -187,7 +198,7 @@ defmodule Kaffy.ResourceSchema do
         value
 
       true ->
-        default_value
+        kaffy_field_value(schema, field)
     end
   end
 
@@ -292,10 +303,10 @@ defmodule Kaffy.ResourceSchema do
     Enum.filter(fields(schema), fn f ->
       field_name = elem(f, 0)
 
-      field_type(schema, f).type in [:string, :textarea, :richtext] &&
+      field_type(schema, f).type in [:string, :textarea, :richtext, :id, :integer, :decimal] &&
         field_name in persisted_fields
     end)
-    |> Enum.map(fn {f, _} -> f end)
+    |> Enum.map(fn {f, options} -> {f, options.type} end)
   end
 
   def filter_fields(_), do: nil
@@ -308,6 +319,9 @@ defmodule Kaffy.ResourceSchema do
     get_all_fields(schema)
     |> Enum.filter(fn
       {_f, %{type: :map}} ->
+        true
+
+      {_f, %{type: {:array, _}}} ->
         true
 
       f when is_atom(f) ->
